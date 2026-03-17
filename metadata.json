@@ -1,0 +1,5 @@
+{
+  "name": "时间切片 (Time Slices)",
+  "description": "一个极简的时间记录工具，自动保存时间戳，帮你追踪每天的时间去向。",
+  "requestFramePermissions": []
+}
