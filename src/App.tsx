@@ -59,9 +59,17 @@ export default function App() {
   }, [isSummaryMode, reflections]);
 
   useEffect(() => {
+    // Clear hash on mount if it exists to prevent weird history states on refresh
+    if (window.location.hash === '#summary') {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, []);
+
+  useEffect(() => {
     const handlePopState = () => {
       if (isSummaryMode) {
         setIsSummaryMode(false);
+        setCalcSelection([]);
       }
     };
     window.addEventListener('popstate', handlePopState);
@@ -137,7 +145,8 @@ export default function App() {
 
   const toggleSummaryMode = () => {
     if (!isSummaryMode) {
-      window.history.pushState({ summary: true }, '');
+      // Add #summary to the URL so mobile browsers reliably create a history entry
+      window.history.pushState({ summary: true }, '', '#summary');
       setIsSummaryMode(true);
       setIsCalcMode(false);
       setCalcSelection([]);
@@ -281,7 +290,7 @@ export default function App() {
       <div className="w-full max-w-md h-[100dvh] sm:h-[85vh] sm:max-h-[850px] bg-stone-50 sm:rounded-[2.5rem] sm:shadow-2xl sm:border-8 border-stone-800 flex flex-col overflow-hidden relative">
         
         {/* Header */}
-        <header className="bg-white/90 backdrop-blur-md border-b border-stone-100 px-6 py-4 shrink-0 z-20 flex items-center justify-between shadow-sm">
+        <header className="bg-white/90 backdrop-blur-md border-b border-stone-100 px-6 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 shrink-0 z-20 flex items-center justify-between shadow-sm">
           <div>
             <h1 className="text-xl font-bold tracking-tight text-stone-900 flex items-center gap-2">
               <Clock className="w-5 h-5 text-stone-800" />
@@ -369,7 +378,10 @@ export default function App() {
                     <input 
                       type="date" 
                       value={summaryDate}
-                      onChange={(e) => setSummaryDate(e.target.value)}
+                      onChange={(e) => {
+                        setSummaryDate(e.target.value);
+                        setCalcSelection([]);
+                      }}
                       className="bg-white border border-stone-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-stone-700 font-medium shadow-sm"
                     />
                   </div>
@@ -515,7 +527,7 @@ export default function App() {
         </div>
 
         {/* Bottom Area (Input, Calc Panel, or Summary Panel) */}
-        <div className="absolute bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-stone-100 p-4 pb-8 sm:pb-4 z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.04)]">
+        <div className="absolute bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-stone-100 p-4 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:pb-4 z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.04)]">
           <AnimatePresence mode="wait">
             {isSummaryMode ? (
               <motion.div
