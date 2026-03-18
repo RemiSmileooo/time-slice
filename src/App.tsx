@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Clock, Trash2, Calendar, Send, Timer, BookOpen } from 'lucide-react';
+import { Clock, Trash2, Calendar, Send, Timer, BookOpen, History } from 'lucide-react';
 
 interface LogEntry {
   id: string;
@@ -38,6 +38,13 @@ export default function App() {
   const [isSummaryMode, setIsSummaryMode] = useState(false);
   const [calcSelection, setCalcSelection] = useState<string[]>([]);
   const [currentTime, setCurrentTime] = useState(Date.now());
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [customDate, setCustomDate] = useState('');
+  const [customTime, setCustomTime] = useState('');
+  
+  const todayObj = new Date();
+  const todayKey = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
+  const [summaryDate, setSummaryDate] = useState<string>(todayKey);
   
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -49,6 +56,16 @@ export default function App() {
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
   }, [isSummaryMode, reflections]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      if (isSummaryMode) {
+        setIsSummaryMode(false);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [isSummaryMode]);
 
   useEffect(() => {
     if (!isSummaryMode) return;
@@ -66,18 +83,36 @@ export default function App() {
     localStorage.setItem('time-tracker-reflections', JSON.stringify(reflections));
   }, [reflections]);
 
+  const handleToggleTimePicker = () => {
+    if (!showTimePicker) {
+      const now = new Date();
+      setCustomDate(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`);
+      setCustomTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+    }
+    setShowTimePicker(!showTimePicker);
+  };
+
   const handleAddEntry = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!inputValue.trim()) return;
 
+    let timestamp = Date.now();
+    if (showTimePicker && customDate && customTime) {
+      timestamp = new Date(`${customDate}T${customTime}`).getTime();
+    }
+
     const newEntry: LogEntry = {
       id: crypto.randomUUID(),
-      timestamp: Date.now(),
+      timestamp,
       text: inputValue.trim(),
     };
 
-    setEntries(prev => [newEntry, ...prev]);
+    setEntries(prev => {
+      const updated = [newEntry, ...prev];
+      return updated.sort((a, b) => b.timestamp - a.timestamp);
+    });
     setInputValue('');
+    setShowTimePicker(false);
     
     if (scrollRef.current) {
       scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
@@ -93,18 +128,25 @@ export default function App() {
 
   const toggleCalcMode = () => {
     setIsCalcMode(!isCalcMode);
-    setIsSummaryMode(false);
+    if (isSummaryMode) {
+      window.history.back();
+    }
     setCalcSelection([]);
   };
 
   const toggleSummaryMode = () => {
-    setIsSummaryMode(!isSummaryMode);
-    setIsCalcMode(false);
-    setCalcSelection([]);
+    if (!isSummaryMode) {
+      window.history.pushState({ summary: true }, '');
+      setIsSummaryMode(true);
+      setIsCalcMode(false);
+      setCalcSelection([]);
+    } else {
+      window.history.back();
+    }
   };
 
   const handleEntryClick = (id: string) => {
-    if (!isCalcMode) return;
+    if (!isCalcMode && !isSummaryMode) return;
     setCalcSelection(prev => {
       if (prev.includes(id)) {
         return prev.filter(x => x !== id);
@@ -163,13 +205,13 @@ export default function App() {
   }, {} as Record<string, LogEntry[]>);
 
   // Today's key for reflections
-  const todayObj = new Date();
-  const todayKey = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
+  const todayObjForGroup = new Date();
+  const todayKeyForGroup = `${todayObjForGroup.getFullYear()}-${String(todayObjForGroup.getMonth() + 1).padStart(2, '0')}-${String(todayObjForGroup.getDate()).padStart(2, '0')}`;
   
-  // Today's entries for summary (oldest first for reading chronologically)
-  const todayEntries = entries.filter(e => {
+  // Selected date's entries for summary (oldest first for reading chronologically)
+  const selectedDateEntries = entries.filter(e => {
     const d = new Date(e.timestamp);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` === todayKey;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` === summaryDate;
   }).reverse();
 
   return (
@@ -184,7 +226,7 @@ export default function App() {
               时间切片
             </h1>
             <p className="text-stone-500 mt-1 text-xs">
-              记录每一个当下
+              记录每一个当下-Jin
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -218,60 +260,45 @@ export default function App() {
                 className="flex flex-col min-h-full"
               >
                 <div className="mb-8">
-                  <h2 className="text-[15px] font-bold text-stone-800 mb-3 flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-indigo-500" />
-                    今日时间线
-                  </h2>
-                  <div className="bg-white rounded-2xl p-5 border border-stone-100 shadow-sm">
-                    {todayEntries.length === 0 ? (
-                      <p className="text-stone-400 text-sm text-center py-4">今天还没有记录哦~</p>
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-[15px] font-bold text-stone-800 flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-indigo-500" />
+                      {summaryDate === todayKey ? '今日时间线' : '单日时间线'}
+                    </h2>
+                    <input 
+                      type="date" 
+                      value={summaryDate}
+                      onChange={(e) => setSummaryDate(e.target.value)}
+                      className="bg-white border border-stone-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-stone-700 font-medium shadow-sm"
+                    />
+                  </div>
+                  <div className="bg-white rounded-2xl p-4 border border-stone-100 shadow-sm space-y-2">
+                    {selectedDateEntries.length === 0 ? (
+                      <p className="text-stone-400 text-sm text-center py-4">{summaryDate === todayKey ? '今天还没有记录哦~' : '这一天没有记录哦~'}</p>
                     ) : (
-                      <div className="flex flex-col">
-                        {todayEntries.map((entry, index) => {
-                          const nextEntry = todayEntries[index + 1];
-                          let durationStr = '';
-                          if (nextEntry) {
-                            const diff = nextEntry.timestamp - entry.timestamp;
-                            const hours = Math.floor(diff / 3600000);
-                            const minutes = Math.floor((diff % 3600000) / 60000);
-                            if (hours > 0 && minutes > 0) durationStr = `${hours}小时${minutes}分钟`;
-                            else if (hours > 0) durationStr = `${hours}小时`;
-                            else if (minutes > 0) durationStr = `${minutes}分钟`;
-                            else durationStr = '< 1分钟';
-                          } else {
-                            const diff = currentTime - entry.timestamp;
-                            const hours = Math.floor(diff / 3600000);
-                            const minutes = Math.floor((diff % 3600000) / 60000);
-                            if (hours > 0 && minutes > 0) durationStr = `${hours}小时${minutes}分钟`;
-                            else if (hours > 0) durationStr = `${hours}小时`;
-                            else if (minutes > 0) durationStr = `${minutes}分钟`;
-                            else durationStr = '< 1分钟';
-                            durationStr += ' (至今)';
-                          }
-
+                      <div className="flex flex-col gap-2">
+                        {selectedDateEntries.map((entry) => {
+                          const isSelected = calcSelection.includes(entry.id);
                           return (
-                            <div key={entry.id} className="relative">
-                              <div className="flex gap-4 text-[14px] items-start relative z-10">
-                                <div className="w-12 shrink-0 text-center font-mono mt-0.5 font-medium text-stone-500">
-                                  {new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-                                </div>
-                                <div className="text-stone-800 break-words pt-0.5 leading-relaxed">{entry.text}</div>
-                              </div>
-                              
-                              <div className="flex gap-4 my-0.5">
-                                <div className="w-12 shrink-0 flex justify-center">
-                                  <div className={`w-0.5 h-12 rounded-full my-1 ${nextEntry ? 'bg-emerald-400/60' : 'bg-gradient-to-b from-emerald-400/60 to-transparent'}`}></div>
-                                </div>
-                                <div className="flex items-center py-2">
-                                  <span className="text-[12px] text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg flex items-center gap-1.5 font-medium border border-emerald-200/50 shadow-sm">
-                                    <Timer className="w-3.5 h-3.5" />
-                                    {durationStr}
-                                  </span>
-                                </div>
-                              </div>
+                            <div 
+                              key={entry.id} 
+                              onClick={() => handleEntryClick(entry.id)}
+                              className={`flex gap-3 text-[14px] p-3 rounded-xl cursor-pointer transition-colors ${isSelected ? 'bg-emerald-50 border border-emerald-200' : 'hover:bg-stone-50 border border-transparent'}`}
+                            >
+                              <span className={`font-mono shrink-0 ${isSelected ? 'text-emerald-600' : 'text-stone-400'}`}>
+                                {new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                              <span className={`break-words ${isSelected ? 'text-emerald-800' : 'text-stone-700'}`}>{entry.text}</span>
                             </div>
                           );
                         })}
+                      </div>
+                    )}
+                    
+                    {calcSelection.length === 2 && isSummaryMode && (
+                      <div className="mt-4 p-3 bg-emerald-50 rounded-xl border border-emerald-100 flex items-center justify-between">
+                        <span className="text-emerald-700 text-sm font-medium">所选时间段时长：</span>
+                        <span className="text-emerald-700 font-bold">{durationText}</span>
                       </div>
                     )}
                   </div>
@@ -280,17 +307,17 @@ export default function App() {
                 <div className="flex flex-col mt-8">
                   <h2 className="text-[15px] font-bold text-stone-800 mb-3 flex items-center gap-2">
                     <BookOpen className="w-4 h-4 text-indigo-500" />
-                    感悟与反思
+                    {summaryDate === todayKey ? '今日感悟与反思' : '感悟与反思'}
                   </h2>
                   <textarea
                     ref={textareaRef}
-                    value={reflections[todayKey] || ''}
+                    value={reflections[summaryDate] || ''}
                     onChange={(e) => {
-                      setReflections(prev => ({ ...prev, [todayKey]: e.target.value }));
+                      setReflections(prev => ({ ...prev, [summaryDate]: e.target.value }));
                       e.target.style.height = 'auto';
                       e.target.style.height = `${e.target.scrollHeight}px`;
                     }}
-                    placeholder="写下今天的收获、反思或是心情..."
+                    placeholder={`写下${summaryDate === todayKey ? '今天' : '这天'}的收获、反思或是心情...`}
                     className="w-full p-4 bg-white border border-stone-200 rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-[15px] leading-relaxed shadow-sm overflow-hidden min-h-[200px]"
                   />
                 </div>
@@ -434,23 +461,56 @@ export default function App() {
                 exit={{ opacity: 0, y: 20 }}
                 transition={{ duration: 0.2 }}
                 onSubmit={handleAddEntry} 
-                className="relative flex items-center"
+                className="flex flex-col gap-2 w-full"
               >
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  placeholder="此刻你在做什么？"
-                  className="w-full bg-stone-100 border-transparent rounded-full py-3.5 pl-5 pr-14 focus:outline-none focus:ring-2 focus:ring-stone-800 focus:bg-white transition-all text-[15px]"
-                />
-                <button
-                  type="submit"
-                  disabled={!inputValue.trim()}
-                  className="absolute right-1.5 p-2.5 bg-stone-800 text-white rounded-full hover:bg-stone-700 disabled:opacity-40 disabled:hover:bg-stone-800 transition-colors shadow-sm"
-                >
-                  <Send className="w-4 h-4 ml-0.5" />
-                </button>
+                <AnimatePresence>
+                  {showTimePicker && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0, marginBottom: 0 }}
+                      animate={{ opacity: 1, height: 'auto', marginBottom: 4 }}
+                      exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                      className="flex gap-2 overflow-hidden"
+                    >
+                      <input
+                        type="date"
+                        value={customDate}
+                        onChange={(e) => setCustomDate(e.target.value)}
+                        className="flex-1 bg-stone-100 border border-transparent rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-inset focus:ring-stone-800 transition-all"
+                      />
+                      <input
+                        type="time"
+                        value={customTime}
+                        onChange={(e) => setCustomTime(e.target.value)}
+                        className="flex-1 bg-stone-100 border border-transparent rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-inset focus:ring-stone-800 transition-all"
+                      />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                <div className="relative flex items-center">
+                  <button
+                    type="button"
+                    onClick={handleToggleTimePicker}
+                    className={`absolute left-1.5 p-2 rounded-full transition-colors z-10 ${showTimePicker ? 'bg-indigo-100 text-indigo-600' : 'text-stone-400 hover:bg-stone-200 hover:text-stone-600'}`}
+                    title="补录时间"
+                  >
+                    <History className="w-5 h-5" />
+                  </button>
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    placeholder={showTimePicker ? "补录记录..." : "此刻你在做什么？"}
+                    className="w-full bg-stone-100 border-transparent rounded-full py-3.5 pl-12 pr-14 focus:outline-none focus:ring-2 focus:ring-stone-800 focus:bg-white transition-all text-[15px]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!inputValue.trim()}
+                    className="absolute right-1.5 p-2.5 bg-stone-800 text-white rounded-full hover:bg-stone-700 disabled:opacity-40 disabled:hover:bg-stone-800 transition-colors shadow-sm z-10"
+                  >
+                    <Send className="w-4 h-4 ml-0.5" />
+                  </button>
+                </div>
               </motion.form>
             )}
           </AnimatePresence>
