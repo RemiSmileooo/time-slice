@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Clock, Trash2, Calendar, Send, Timer, BookOpen, History } from 'lucide-react';
+import { Clock, Trash2, Calendar, Send, Timer, BookOpen, History, Download, FileText, FileCode } from 'lucide-react';
 
 interface LogEntry {
   id: string;
@@ -41,6 +41,7 @@ export default function App() {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [customDate, setCustomDate] = useState('');
   const [customTime, setCustomTime] = useState('');
+  const [showExportMenu, setShowExportMenu] = useState(false);
   
   const todayObj = new Date();
   const todayKey = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
@@ -214,6 +215,67 @@ export default function App() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` === summaryDate;
   }).reverse();
 
+  const exportData = (format: 'txt' | 'md') => {
+    setShowExportMenu(false);
+    
+    // Group all entries by date (ascending for export)
+    const sortedEntries = [...entries].sort((a, b) => a.timestamp - b.timestamp);
+    const grouped: Record<string, LogEntry[]> = {};
+    
+    sortedEntries.forEach(entry => {
+      const d = new Date(entry.timestamp);
+      const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (!grouped[dateKey]) {
+        grouped[dateKey] = [];
+      }
+      grouped[dateKey].push(entry);
+    });
+
+    let content = '';
+    const title = '时间切片记录 - Jin\n\n';
+    
+    if (format === 'md') {
+      content += `# ${title}`;
+      Object.entries(grouped).forEach(([date, dayEntries]) => {
+        content += `## ${date}\n\n`;
+        dayEntries.forEach(entry => {
+          const time = new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+          content += `- **${time}** ${entry.text}\n`;
+        });
+        
+        if (reflections[date]) {
+          content += `\n> **今日感悟与反思：**\n> ${reflections[date].split('\n').join('\n> ')}\n`;
+        }
+        content += '\n---\n\n';
+      });
+    } else {
+      content += title;
+      Object.entries(grouped).forEach(([date, dayEntries]) => {
+        content += `${date}\n`;
+        content += `------------------------\n`;
+        dayEntries.forEach(entry => {
+          const time = new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+          content += `${time} ${entry.text}\n`;
+        });
+        
+        if (reflections[date]) {
+          content += `\n[今日感悟与反思]\n${reflections[date]}\n`;
+        }
+        content += '\n========================\n\n';
+      });
+    }
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `时间切片记录_${todayKey}.${format}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="min-h-screen bg-stone-200 sm:p-4 md:p-8 flex items-center justify-center font-sans selection:bg-stone-300">
       <div className="w-full max-w-md h-[100dvh] sm:h-[85vh] sm:max-h-[850px] bg-stone-50 sm:rounded-[2.5rem] sm:shadow-2xl sm:border-8 border-stone-800 flex flex-col overflow-hidden relative">
@@ -230,6 +292,45 @@ export default function App() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <div className="relative">
+              <button 
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                className={`p-2.5 rounded-full transition-colors ${showExportMenu ? 'bg-stone-200 text-stone-800' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
+                title="导出记录"
+              >
+                <Download className="w-5 h-5" />
+              </button>
+              
+              <AnimatePresence>
+                {showExportMenu && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute right-0 mt-2 w-44 bg-white rounded-2xl shadow-xl border border-stone-100 py-2 z-50 overflow-hidden"
+                    >
+                      <button 
+                        onClick={() => exportData('txt')}
+                        className="w-full text-left px-4 py-2.5 text-sm text-stone-700 hover:bg-stone-50 transition-colors flex items-center gap-2"
+                      >
+                        <FileText className="w-4 h-4 text-stone-400" />
+                        导出为 TXT
+                      </button>
+                      <button 
+                        onClick={() => exportData('md')}
+                        className="w-full text-left px-4 py-2.5 text-sm text-stone-700 hover:bg-stone-50 transition-colors flex items-center gap-2"
+                      >
+                        <FileCode className="w-4 h-4 text-stone-400" />
+                        导出为 Markdown
+                      </button>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
             <button 
               onClick={toggleSummaryMode}
               className={`p-2.5 rounded-full transition-colors ${isSummaryMode ? 'bg-indigo-100 text-indigo-600' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
