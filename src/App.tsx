@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Clock, Trash2, Calendar, Send, Timer, BookOpen, History, Download, FileText, FileCode } from 'lucide-react';
+import { Clock, Trash2, Calendar, Send, Timer, BookOpen, History, Download, FileText, FileCode, Pencil, X, Check, Copy } from 'lucide-react';
+import { startOfWeek, endOfWeek, startOfMonth, endOfMonth, eachDayOfInterval, eachWeekOfInterval, format } from 'date-fns';
+import { zhCN } from 'date-fns/locale';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 interface LogEntry {
   id: string;
@@ -33,6 +36,30 @@ export default function App() {
     return {};
   });
 
+  const [weeklyReflections, setWeeklyReflections] = useState<Record<string, string>>(() => {
+    const saved = localStorage.getItem('time-tracker-weekly-reflections');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        return {};
+      }
+    }
+    return {};
+  });
+
+  const [monthlyReflections, setMonthlyReflections] = useState<Record<string, string>>(() => {
+    const saved = localStorage.getItem('time-tracker-monthly-reflections');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        return {};
+      }
+    }
+    return {};
+  });
+
   const [inputValue, setInputValue] = useState('');
   const [isCalcMode, setIsCalcMode] = useState(false);
   const [isSummaryMode, setIsSummaryMode] = useState(false);
@@ -41,11 +68,23 @@ export default function App() {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [customDate, setCustomDate] = useState('');
   const [customTime, setCustomTime] = useState('');
-  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   
   const todayObj = new Date();
   const todayKey = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
+  
+  const [exportStartDate, setExportStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+  const [exportEndDate, setExportEndDate] = useState(todayKey);
+  
   const [summaryDate, setSummaryDate] = useState<string>(todayKey);
+  const [summaryTab, setSummaryTab] = useState<'daily' | 'weekly' | 'monthly'>('daily');
   
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -59,22 +98,33 @@ export default function App() {
   }, [isSummaryMode, reflections]);
 
   useEffect(() => {
-    // Clear hash on mount if it exists to prevent weird history states on refresh
-    if (window.location.hash === '#summary') {
-      window.history.replaceState(null, '', window.location.pathname + window.location.search);
-    }
-  }, []);
-
-  useEffect(() => {
-    const handlePopState = () => {
-      if (isSummaryMode) {
-        setIsSummaryMode(false);
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      setIsSummaryMode(hash === '#summary');
+      setIsCalcMode(hash === '#calc');
+      setShowExportModal(hash === '#export');
+      
+      if (hash === '') {
         setCalcSelection([]);
       }
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, [isSummaryMode]);
+
+    // Initial check
+    handleHashChange();
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const safeBack = () => {
+    const before = window.location.hash;
+    window.history.back();
+    setTimeout(() => {
+      if (window.location.hash === before) {
+        window.location.hash = '';
+      }
+    }, 50);
+  };
 
   useEffect(() => {
     if (!isSummaryMode) return;
@@ -91,6 +141,14 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('time-tracker-reflections', JSON.stringify(reflections));
   }, [reflections]);
+
+  useEffect(() => {
+    localStorage.setItem('time-tracker-weekly-reflections', JSON.stringify(weeklyReflections));
+  }, [weeklyReflections]);
+
+  useEffect(() => {
+    localStorage.setItem('time-tracker-monthly-reflections', JSON.stringify(monthlyReflections));
+  }, [monthlyReflections]);
 
   const handleToggleTimePicker = () => {
     if (!showTimePicker) {
@@ -133,25 +191,37 @@ export default function App() {
   const handleDelete = (id: string) => {
     setEntries(prev => prev.filter(entry => entry.id !== id));
     setCalcSelection(prev => prev.filter(selectedId => selectedId !== id));
+    if (deletingId === id) setDeletingId(null);
+  };
+
+  const startEdit = (entry: LogEntry) => {
+    setEditingId(entry.id);
+    setEditValue(entry.text);
+    setDeletingId(null);
+  };
+
+  const handleSaveEdit = (id: string) => {
+    if (!editValue.trim()) return;
+    setEntries(prev => prev.map(entry => 
+      entry.id === id ? { ...entry, text: editValue.trim() } : entry
+    ));
+    setEditingId(null);
+    setEditValue('');
   };
 
   const toggleCalcMode = () => {
-    setIsCalcMode(!isCalcMode);
-    if (isSummaryMode) {
-      window.history.back();
+    if (window.location.hash !== '#calc') {
+      window.location.hash = 'calc';
+    } else {
+      safeBack();
     }
-    setCalcSelection([]);
   };
 
   const toggleSummaryMode = () => {
-    if (!isSummaryMode) {
-      // Add #summary to the URL so mobile browsers reliably create a history entry
-      window.history.pushState({ summary: true }, '', '#summary');
-      setIsSummaryMode(true);
-      setIsCalcMode(false);
-      setCalcSelection([]);
+    if (window.location.hash !== '#summary') {
+      window.location.hash = 'summary';
     } else {
-      window.history.back();
+      safeBack();
     }
   };
 
@@ -224,11 +294,52 @@ export default function App() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` === summaryDate;
   }).reverse();
 
-  const exportData = (format: 'txt' | 'md') => {
-    setShowExportMenu(false);
+  const getChartData = (type: 'weekly' | 'monthly') => {
+    const targetDate = new Date(summaryDate);
+    let start, end;
+    if (type === 'weekly') {
+      start = startOfWeek(targetDate, { weekStartsOn: 1 });
+      end = endOfWeek(targetDate, { weekStartsOn: 1 });
+    } else {
+      start = startOfMonth(targetDate);
+      end = endOfMonth(targetDate);
+    }
+
+    const days = eachDayOfInterval({ start, end });
+    return days.map(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const dayEntries = entries.filter(e => {
+        const d = new Date(e.timestamp);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` === dateStr;
+      });
+      
+      let durationMs = 0;
+      if (dayEntries.length >= 2) {
+        const timestamps = dayEntries.map(e => e.timestamp);
+        durationMs = Math.max(...timestamps) - Math.min(...timestamps);
+      }
+      
+      const durationHours = Number((durationMs / (1000 * 60 * 60)).toFixed(1));
+      
+      return {
+        dateStr,
+        displayDate: type === 'weekly' ? format(day, 'EEEE', { locale: zhCN }).replace('星期', '周') : format(day, 'd日'),
+        duration: durationHours,
+        reflection: reflections[dateStr] || ''
+      };
+    });
+  };
+
+  const exportData = async (exportFormat: 'txt' | 'md' | 'copy') => {
+    safeBack();
     
-    // Group all entries by date (ascending for export)
-    const sortedEntries = [...entries].sort((a, b) => a.timestamp - b.timestamp);
+    const startTimestamp = new Date(`${exportStartDate}T00:00:00`).getTime();
+    const endTimestamp = new Date(`${exportEndDate}T23:59:59`).getTime();
+
+    const sortedEntries = [...entries]
+      .filter(entry => entry.timestamp >= startTimestamp && entry.timestamp <= endTimestamp)
+      .sort((a, b) => a.timestamp - b.timestamp);
+      
     const grouped: Record<string, LogEntry[]> = {};
     
     sortedEntries.forEach(entry => {
@@ -240,12 +351,27 @@ export default function App() {
       grouped[dateKey].push(entry);
     });
 
+    try {
+      const daysInRange = eachDayOfInterval({ start: new Date(exportStartDate), end: new Date(exportEndDate) });
+      daysInRange.forEach(day => {
+        const dateKey = format(day, 'yyyy-MM-dd');
+        if (reflections[dateKey] && !grouped[dateKey]) {
+          grouped[dateKey] = [];
+        }
+      });
+    } catch (e) {
+      // Ignore invalid dates
+    }
+
+    const sortedDates = Object.keys(grouped).sort();
+
     let content = '';
-    const title = '时间切片记录 - Jin\n\n';
+    const title = `时间切片记录 (${exportStartDate} 至 ${exportEndDate}) - Jin\n\n`;
     
-    if (format === 'md') {
+    if (exportFormat === 'md') {
       content += `# ${title}`;
-      Object.entries(grouped).forEach(([date, dayEntries]) => {
+      sortedDates.forEach(date => {
+        const dayEntries = grouped[date] || [];
         content += `## ${date}\n\n`;
         dayEntries.forEach(entry => {
           const time = new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
@@ -259,7 +385,8 @@ export default function App() {
       });
     } else {
       content += title;
-      Object.entries(grouped).forEach(([date, dayEntries]) => {
+      sortedDates.forEach(date => {
+        const dayEntries = grouped[date] || [];
         content += `${date}\n`;
         content += `------------------------\n`;
         dayEntries.forEach(entry => {
@@ -274,11 +401,48 @@ export default function App() {
       });
     }
 
+    if (exportFormat === 'copy') {
+      try {
+        await navigator.clipboard.writeText(content);
+        alert('已复制到剪贴板');
+      } catch (err) {
+        alert('复制失败，请重试');
+      }
+      return;
+    }
+
+    const fileName = `时间切片记录_${exportStartDate}_至_${exportEndDate}.${exportFormat}`;
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const file = new File([blob], fileName, { type: 'text/plain' });
+
+    if (navigator.share) {
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: '时间切片记录',
+          });
+          return;
+        } catch (err) {
+          console.log('Share file failed or cancelled', err);
+        }
+      } else {
+        try {
+          await navigator.share({
+            title: '时间切片记录',
+            text: content,
+          });
+          return;
+        } catch (err) {
+          console.log('Share text failed or cancelled', err);
+        }
+      }
+    }
+
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `时间切片记录_${todayKey}.${format}`;
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -301,45 +465,19 @@ export default function App() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="relative">
-              <button 
-                onClick={() => setShowExportMenu(!showExportMenu)}
-                className={`p-2.5 rounded-full transition-colors ${showExportMenu ? 'bg-stone-200 text-stone-800' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
-                title="导出记录"
-              >
-                <Download className="w-5 h-5" />
-              </button>
-              
-              <AnimatePresence>
-                {showExportMenu && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
-                    <motion.div 
-                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                      transition={{ duration: 0.15 }}
-                      className="absolute right-0 mt-2 w-44 bg-white rounded-2xl shadow-xl border border-stone-100 py-2 z-50 overflow-hidden"
-                    >
-                      <button 
-                        onClick={() => exportData('txt')}
-                        className="w-full text-left px-4 py-2.5 text-sm text-stone-700 hover:bg-stone-50 transition-colors flex items-center gap-2"
-                      >
-                        <FileText className="w-4 h-4 text-stone-400" />
-                        导出为 TXT
-                      </button>
-                      <button 
-                        onClick={() => exportData('md')}
-                        className="w-full text-left px-4 py-2.5 text-sm text-stone-700 hover:bg-stone-50 transition-colors flex items-center gap-2"
-                      >
-                        <FileCode className="w-4 h-4 text-stone-400" />
-                        导出为 Markdown
-                      </button>
-                    </motion.div>
-                  </>
-                )}
-              </AnimatePresence>
-            </div>
+            <button 
+              onClick={() => {
+                if (window.location.hash !== '#export') {
+                  window.location.hash = 'export';
+                } else {
+                  safeBack();
+                }
+              }}
+              className={`p-2.5 rounded-full transition-colors ${showExportModal ? 'bg-stone-200 text-stone-800' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
+              title="导出记录"
+            >
+              <Download className="w-5 h-5" />
+            </button>
             <button 
               onClick={toggleSummaryMode}
               className={`p-2.5 rounded-full transition-colors ${isSummaryMode ? 'bg-indigo-100 text-indigo-600' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
@@ -369,71 +507,302 @@ export default function App() {
                 transition={{ duration: 0.2 }}
                 className="flex flex-col min-h-full"
               >
-                <div className="mb-8">
-                  <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-[15px] font-bold text-stone-800 flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-indigo-500" />
-                      {summaryDate === todayKey ? '今日时间线' : '单日时间线'}
-                    </h2>
-                    <input 
-                      type="date" 
-                      value={summaryDate}
-                      onChange={(e) => {
-                        setSummaryDate(e.target.value);
-                        setCalcSelection([]);
-                      }}
-                      className="bg-white border border-stone-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-stone-700 font-medium shadow-sm"
-                    />
-                  </div>
-                  <div className="bg-white rounded-2xl p-4 border border-stone-100 shadow-sm space-y-2">
-                    {selectedDateEntries.length === 0 ? (
-                      <p className="text-stone-400 text-sm text-center py-4">{summaryDate === todayKey ? '今天还没有记录哦~' : '这一天没有记录哦~'}</p>
-                    ) : (
-                      <div className="flex flex-col gap-2">
-                        {selectedDateEntries.map((entry) => {
-                          const isSelected = calcSelection.includes(entry.id);
-                          return (
-                            <div 
-                              key={entry.id} 
-                              onClick={() => handleEntryClick(entry.id)}
-                              className={`flex gap-3 text-[14px] p-3 rounded-xl cursor-pointer transition-colors ${isSelected ? 'bg-emerald-50 border border-emerald-200' : 'hover:bg-stone-50 border border-transparent'}`}
-                            >
-                              <span className={`font-mono shrink-0 ${isSelected ? 'text-emerald-600' : 'text-stone-400'}`}>
-                                {new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                              <span className={`break-words ${isSelected ? 'text-emerald-800' : 'text-stone-700'}`}>{entry.text}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    
-                    {calcSelection.length === 2 && isSummaryMode && (
-                      <div className="mt-4 p-3 bg-emerald-50 rounded-xl border border-emerald-100 flex items-center justify-between">
-                        <span className="text-emerald-700 text-sm font-medium">所选时间段时长：</span>
-                        <span className="text-emerald-700 font-bold">{durationText}</span>
-                      </div>
-                    )}
-                  </div>
+                <div className="flex bg-stone-200/50 p-1 rounded-xl mb-6">
+                  <button
+                    onClick={() => setSummaryTab('daily')}
+                    className={`flex-1 py-1.5 text-sm font-medium rounded-lg transition-all ${summaryTab === 'daily' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                  >
+                    日总结
+                  </button>
+                  <button
+                    onClick={() => setSummaryTab('weekly')}
+                    className={`flex-1 py-1.5 text-sm font-medium rounded-lg transition-all ${summaryTab === 'weekly' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                  >
+                    周总结
+                  </button>
+                  <button
+                    onClick={() => setSummaryTab('monthly')}
+                    className={`flex-1 py-1.5 text-sm font-medium rounded-lg transition-all ${summaryTab === 'monthly' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'}`}
+                  >
+                    月总结
+                  </button>
                 </div>
 
-                <div className="flex flex-col mt-8">
-                  <h2 className="text-[15px] font-bold text-stone-800 mb-3 flex items-center gap-2">
-                    <BookOpen className="w-4 h-4 text-indigo-500" />
-                    {summaryDate === todayKey ? '今日感悟与反思' : '感悟与反思'}
-                  </h2>
-                  <textarea
-                    ref={textareaRef}
-                    value={reflections[summaryDate] || ''}
-                    onChange={(e) => {
-                      setReflections(prev => ({ ...prev, [summaryDate]: e.target.value }));
-                      e.target.style.height = 'auto';
-                      e.target.style.height = `${e.target.scrollHeight}px`;
-                    }}
-                    placeholder={`写下${summaryDate === todayKey ? '今天' : '这天'}的收获、反思或是心情...`}
-                    className="w-full p-4 bg-white border border-stone-200 rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-[15px] leading-relaxed shadow-sm overflow-hidden min-h-[200px]"
-                  />
-                </div>
+                {summaryTab === 'daily' && (
+                  <>
+                    <div className="mb-8">
+                      <div className="flex items-center justify-between mb-3">
+                        <h2 className="text-[15px] font-bold text-stone-800 flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-indigo-500" />
+                          {summaryDate === todayKey ? '今日时间线' : '单日时间线'}
+                        </h2>
+                        <div className="flex items-center gap-2">
+                          {summaryDate !== todayKey && (
+                            <button
+                              onClick={() => {
+                                setSummaryDate(todayKey);
+                                setCalcSelection([]);
+                              }}
+                              className="text-xs text-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-lg font-medium active:bg-indigo-100 transition-colors"
+                            >
+                              回到今天
+                            </button>
+                          )}
+                          <input 
+                            type="date" 
+                            value={summaryDate}
+                            onChange={(e) => {
+                              setSummaryDate(e.target.value);
+                              setCalcSelection([]);
+                            }}
+                            className="bg-white border border-stone-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-stone-700 font-medium shadow-sm"
+                          />
+                        </div>
+                      </div>
+                      <div className="bg-white rounded-2xl p-4 border border-stone-100 shadow-sm space-y-2">
+                        {selectedDateEntries.length === 0 ? (
+                          <p className="text-stone-400 text-sm text-center py-4">{summaryDate === todayKey ? '今天还没有记录哦~' : '这一天没有记录哦~'}</p>
+                        ) : (
+                          <div className="flex flex-col gap-2">
+                            {selectedDateEntries.map((entry) => {
+                              const isSelected = calcSelection.includes(entry.id);
+                              return (
+                                <div 
+                                  key={entry.id} 
+                                  onClick={() => handleEntryClick(entry.id)}
+                                  className={`flex gap-3 text-[14px] p-3 rounded-xl cursor-pointer transition-colors ${isSelected ? 'bg-emerald-50 border border-emerald-200' : 'hover:bg-stone-50 border border-transparent'}`}
+                                >
+                                  <span className={`font-mono shrink-0 ${isSelected ? 'text-emerald-600' : 'text-stone-400'}`}>
+                                    {new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                  <span className={`break-words ${isSelected ? 'text-emerald-800' : 'text-stone-700'}`}>{entry.text}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        
+                        {calcSelection.length === 2 && isSummaryMode && (
+                          <div className="mt-4 p-3 bg-emerald-50 rounded-xl border border-emerald-100 flex items-center justify-between">
+                            <span className="text-emerald-700 text-sm font-medium">所选时间段时长：</span>
+                            <span className="text-emerald-700 font-bold">{durationText}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col mt-8">
+                      <h2 className="text-[15px] font-bold text-stone-800 mb-3 flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-indigo-500" />
+                        {summaryDate === todayKey ? '今日感悟与反思' : '感悟与反思'}
+                      </h2>
+                      <textarea
+                        ref={textareaRef}
+                        value={reflections[summaryDate] || ''}
+                        onChange={(e) => {
+                          setReflections(prev => ({ ...prev, [summaryDate]: e.target.value }));
+                          e.target.style.height = 'auto';
+                          e.target.style.height = `${e.target.scrollHeight}px`;
+                        }}
+                        placeholder={`写下${summaryDate === todayKey ? '今天' : '这天'}的收获、反思或是心情...`}
+                        className="w-full p-4 bg-white border border-stone-200 rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-[15px] leading-relaxed shadow-sm overflow-hidden min-h-[200px]"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {summaryTab === 'weekly' && (() => {
+                  const chartData = getChartData('weekly');
+                  const totalDuration = chartData.reduce((acc, curr) => acc + curr.duration, 0);
+                  const totalDurationText = `${Math.floor(totalDuration)}小时${Math.round((totalDuration % 1) * 60)}分钟`;
+                  const reflectionsList = chartData.filter(d => d.reflection.trim().length > 0);
+                  
+                  const targetDate = new Date(summaryDate);
+                  const weekStart = startOfWeek(targetDate, { weekStartsOn: 1 });
+                  const weekKey = format(weekStart, 'yyyy-MM-dd');
+
+                  return (
+                    <div className="flex flex-col gap-6">
+                      <div className="flex items-center justify-between mb-2">
+                        <h2 className="text-[15px] font-bold text-stone-800 flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-indigo-500" />
+                          本周概览
+                        </h2>
+                        <div className="flex items-center gap-2">
+                          {summaryDate !== todayKey && (
+                            <button
+                              onClick={() => {
+                                setSummaryDate(todayKey);
+                                setCalcSelection([]);
+                              }}
+                              className="text-xs text-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-lg font-medium active:bg-indigo-100 transition-colors"
+                            >
+                              回到今天
+                            </button>
+                          )}
+                          <input 
+                            type="date" 
+                            value={summaryDate}
+                            onChange={(e) => {
+                              setSummaryDate(e.target.value);
+                              setCalcSelection([]);
+                            }}
+                            className="bg-white border border-stone-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-stone-700 font-medium shadow-sm"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="bg-white rounded-2xl p-4 border border-stone-100 shadow-sm">
+                        <h3 className="text-[14px] font-bold text-stone-800 mb-4 flex items-center gap-2">
+                          <Timer className="w-4 h-4 text-emerald-500" />
+                          本周总时长: <span className="text-emerald-600">{totalDurationText}</span>
+                        </h3>
+                        <div className="h-48 w-full mt-4">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                              <XAxis dataKey="displayDate" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#a8a29e' }} />
+                              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#a8a29e' }} />
+                              <Tooltip 
+                                cursor={{ fill: '#f5f5f4' }}
+                                contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                formatter={(value: number) => [`${value} 小时`, '记录时长']}
+                                labelFormatter={(label, payload) => payload[0]?.payload.dateStr || label}
+                              />
+                              <Bar dataKey="duration" radius={[4, 4, 0, 0]}>
+                                {chartData.map((entry, index) => (
+                                  <Cell key={`cell-${index}`} fill={entry.dateStr === todayKey ? '#10b981' : '#6366f1'} />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+
+                      <div className="bg-white rounded-2xl p-4 border border-stone-100 shadow-sm">
+                        <h3 className="text-[14px] font-bold text-stone-800 mb-4 flex items-center gap-2">
+                          <BookOpen className="w-4 h-4 text-indigo-500" />
+                          每日感悟汇总
+                        </h3>
+                        {reflectionsList.length === 0 ? (
+                          <p className="text-stone-400 text-sm text-center py-4">这周还没有写下每日感悟哦~</p>
+                        ) : (
+                          <div className="flex flex-col gap-4">
+                            {reflectionsList.map(item => (
+                              <div key={item.dateStr} className="border-b border-stone-100 last:border-0 pb-4 last:pb-0">
+                                <div className="text-xs font-medium text-stone-400 mb-2">{item.dateStr} ({item.displayDate})</div>
+                                <p className="text-[14px] text-stone-700 leading-relaxed whitespace-pre-wrap">{item.reflection}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col mt-2">
+                        <h2 className="text-[15px] font-bold text-stone-800 mb-3 flex items-center gap-2">
+                          <Pencil className="w-4 h-4 text-indigo-500" />
+                          本周总结
+                        </h2>
+                        <textarea
+                          value={weeklyReflections[weekKey] || ''}
+                          onChange={(e) => {
+                            setWeeklyReflections(prev => ({ ...prev, [weekKey]: e.target.value }));
+                            e.target.style.height = 'auto';
+                            e.target.style.height = `${e.target.scrollHeight}px`;
+                          }}
+                          placeholder="写下这周的整体回顾、成就或不足..."
+                          className="w-full p-4 bg-white border border-stone-200 rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-[15px] leading-relaxed shadow-sm overflow-hidden min-h-[150px]"
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {summaryTab === 'monthly' && (() => {
+                  const targetDate = new Date(summaryDate);
+                  const monthStart = startOfMonth(targetDate);
+                  const monthEnd = endOfMonth(targetDate);
+                  const monthKey = format(monthStart, 'yyyy-MM');
+                  
+                  const weeks = eachWeekOfInterval({ start: monthStart, end: monthEnd }, { weekStartsOn: 1 });
+                  const weeklyReflectionsList = weeks.map(week => {
+                    const wKey = format(week, 'yyyy-MM-dd');
+                    const wEnd = endOfWeek(week, { weekStartsOn: 1 });
+                    return {
+                      key: wKey,
+                      displayDate: `${format(week, 'MM.dd')} - ${format(wEnd, 'MM.dd')}`,
+                      reflection: weeklyReflections[wKey] || ''
+                    };
+                  }).filter(w => w.reflection.trim().length > 0);
+
+                  return (
+                    <div className="flex flex-col gap-6">
+                      <div className="flex items-center justify-between mb-2">
+                        <h2 className="text-[15px] font-bold text-stone-800 flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-indigo-500" />
+                          本月概览
+                        </h2>
+                        <div className="flex items-center gap-2">
+                          {summaryDate !== todayKey && (
+                            <button
+                              onClick={() => {
+                                setSummaryDate(todayKey);
+                                setCalcSelection([]);
+                              }}
+                              className="text-xs text-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-lg font-medium active:bg-indigo-100 transition-colors"
+                            >
+                              回到今天
+                            </button>
+                          )}
+                          <input 
+                            type="date" 
+                            value={summaryDate}
+                            onChange={(e) => {
+                              setSummaryDate(e.target.value);
+                              setCalcSelection([]);
+                            }}
+                            className="bg-white border border-stone-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-stone-700 font-medium shadow-sm"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="bg-white rounded-2xl p-4 border border-stone-100 shadow-sm">
+                        <h3 className="text-[14px] font-bold text-stone-800 mb-4 flex items-center gap-2">
+                          <BookOpen className="w-4 h-4 text-indigo-500" />
+                          每周总结汇总
+                        </h3>
+                        {weeklyReflectionsList.length === 0 ? (
+                          <p className="text-stone-400 text-sm text-center py-4">这个月还没有写下周总结哦~</p>
+                        ) : (
+                          <div className="flex flex-col gap-4">
+                            {weeklyReflectionsList.map(item => (
+                              <div key={item.key} className="border-b border-stone-100 last:border-0 pb-4 last:pb-0">
+                                <div className="text-xs font-medium text-stone-400 mb-2">{item.displayDate}</div>
+                                <p className="text-[14px] text-stone-700 leading-relaxed whitespace-pre-wrap">{item.reflection}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col mt-2">
+                        <h2 className="text-[15px] font-bold text-stone-800 mb-3 flex items-center gap-2">
+                          <Pencil className="w-4 h-4 text-indigo-500" />
+                          本月总结
+                        </h2>
+                        <textarea
+                          value={monthlyReflections[monthKey] || ''}
+                          onChange={(e) => {
+                            setMonthlyReflections(prev => ({ ...prev, [monthKey]: e.target.value }));
+                            e.target.style.height = 'auto';
+                            e.target.style.height = `${e.target.scrollHeight}px`;
+                          }}
+                          placeholder="写下这个月的整体回顾、目标达成情况..."
+                          className="w-full p-4 bg-white border border-stone-200 rounded-2xl resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-[15px] leading-relaxed shadow-sm overflow-hidden min-h-[150px]"
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
               </motion.div>
             ) : (
               <motion.div
@@ -450,7 +819,7 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="space-y-8">
-                    {Object.entries(groupedEntries).map(([date, dayEntries]) => (
+                    {Object.entries(groupedEntries).map(([date, dayEntries]: [string, LogEntry[]]) => (
                       <div key={date} className="relative">
                         <div className="py-2 mb-3 -mx-2 px-2">
                           <h2 className="text-xs font-semibold text-stone-500 flex items-center gap-2">
@@ -495,21 +864,91 @@ export default function App() {
                                       <div className={`text-[11px] font-mono font-medium mb-1.5 ${isSelected || isBetween ? 'text-emerald-600' : 'text-stone-400'}`}>
                                         {new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                                       </div>
-                                      <p className={`text-[15px] leading-relaxed break-words ${isSelected || isBetween ? 'text-emerald-900' : 'text-stone-800'}`}>
-                                        {entry.text}
-                                      </p>
+                                      {editingId === entry.id ? (
+                                        <div className="flex flex-col gap-2 mt-1" onClick={(e) => e.stopPropagation()}>
+                                          <textarea
+                                            value={editValue}
+                                            onChange={(e) => setEditValue(e.target.value)}
+                                            className="w-full bg-stone-50 border border-indigo-200 rounded-lg px-3 py-2 text-[15px] text-stone-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                                            rows={2}
+                                            autoFocus
+                                            onKeyDown={(e) => {
+                                              if (e.key === 'Enter' && !e.shiftKey) {
+                                                e.preventDefault();
+                                                handleSaveEdit(entry.id);
+                                              }
+                                            }}
+                                          />
+                                          <div className="flex justify-end gap-2">
+                                            <button
+                                              onClick={() => setEditingId(null)}
+                                              className="px-3 py-1.5 text-xs font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-lg transition-colors"
+                                            >
+                                              取消
+                                            </button>
+                                            <button
+                                              onClick={() => handleSaveEdit(entry.id)}
+                                              className="px-3 py-1.5 text-xs font-medium text-white bg-indigo-500 hover:bg-indigo-600 rounded-lg transition-colors"
+                                            >
+                                              保存
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <p className={`text-[15px] leading-relaxed break-words ${isSelected || isBetween ? 'text-emerald-900' : 'text-stone-800'}`}>
+                                          {entry.text}
+                                        </p>
+                                      )}
                                     </div>
-                                    {!isCalcMode && (
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDelete(entry.id);
-                                        }}
-                                        className="p-2 text-stone-300 hover:text-red-500 active:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
-                                        aria-label="删除记录"
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
+                                    {!isCalcMode && editingId !== entry.id && (
+                                      <div className="flex items-center gap-1">
+                                        {deletingId === entry.id ? (
+                                          <div className="flex items-center gap-1 bg-red-50 px-2 py-1.5 rounded-xl">
+                                            <span className="text-xs text-red-600 font-medium mr-1">确定删除?</span>
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDelete(entry.id);
+                                              }}
+                                              className="p-1.5 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                                            >
+                                              <Check className="w-4 h-4" />
+                                            </button>
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setDeletingId(null);
+                                              }}
+                                              className="p-1.5 text-stone-500 hover:bg-stone-200 rounded-lg transition-colors"
+                                            >
+                                              <X className="w-4 h-4" />
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <>
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                startEdit(entry);
+                                              }}
+                                              className="p-2 text-stone-300 hover:text-indigo-500 active:text-indigo-500 hover:bg-indigo-50 rounded-xl transition-colors"
+                                              aria-label="编辑记录"
+                                            >
+                                              <Pencil className="w-4 h-4" />
+                                            </button>
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setDeletingId(entry.id);
+                                              }}
+                                              className="p-2 text-stone-300 hover:text-red-500 active:text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                                              aria-label="删除记录"
+                                            >
+                                              <Trash2 className="w-4 h-4" />
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
                                     )}
                                   </div>
                                 </motion.div>
@@ -628,6 +1067,75 @@ export default function App() {
             )}
           </AnimatePresence>
         </div>
+
+        {/* Export Modal */}
+        <AnimatePresence>
+          {showExportModal && (
+            <>
+              <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40" onClick={() => safeBack()} />
+              <motion.div 
+                initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 20, scale: 0.95 }}
+                transition={{ duration: 0.2 }}
+                className="absolute bottom-0 left-0 right-0 bg-white rounded-t-[2rem] shadow-2xl border-t border-stone-100 p-6 z-50 flex flex-col gap-6"
+              >
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-bold text-stone-800">导出记录</h2>
+                  <button onClick={() => safeBack()} className="p-2 text-stone-400 hover:bg-stone-100 rounded-full transition-colors">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-sm font-medium text-stone-600">起始日期</label>
+                    <input 
+                      type="date" 
+                      value={exportStartDate}
+                      onChange={(e) => setExportStartDate(e.target.value)}
+                      className="bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-[15px] focus:outline-none focus:ring-2 focus:ring-indigo-500 text-stone-700 font-medium"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <label className="text-sm font-medium text-stone-600">结束日期</label>
+                    <input 
+                      type="date" 
+                      value={exportEndDate}
+                      onChange={(e) => setExportEndDate(e.target.value)}
+                      className="bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-[15px] focus:outline-none focus:ring-2 focus:ring-indigo-500 text-stone-700 font-medium"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 mt-2">
+                  <button 
+                    onClick={() => exportData('txt')}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-xl font-medium transition-colors"
+                  >
+                    <FileText className="w-5 h-5" />
+                    保存为 TXT 文件
+                  </button>
+                  <button 
+                    onClick={() => exportData('md')}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl font-medium transition-colors"
+                  >
+                    <FileCode className="w-5 h-5" />
+                    保存为 Markdown 文件
+                  </button>
+                  <button 
+                    onClick={() => exportData('copy')}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-stone-100 text-stone-700 hover:bg-stone-200 rounded-xl font-medium transition-colors"
+                  >
+                    <Copy className="w-5 h-5" />
+                    复制到剪贴板
+                  </button>
+                </div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+
       </div>
     </div>
   );
