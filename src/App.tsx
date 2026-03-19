@@ -61,7 +61,6 @@ export default function App() {
   });
 
   const [inputValue, setInputValue] = useState('');
-  const [isCalcMode, setIsCalcMode] = useState(false);
   const [isSummaryMode, setIsSummaryMode] = useState(false);
   const [calcSelection, setCalcSelection] = useState<string[]>([]);
   const [currentTime, setCurrentTime] = useState(Date.now());
@@ -98,10 +97,9 @@ export default function App() {
   }, [isSummaryMode, reflections]);
 
   useEffect(() => {
-    const handleHashChange = () => {
+    const handleStateChange = () => {
       const hash = window.location.hash;
       setIsSummaryMode(hash === '#summary');
-      setIsCalcMode(hash === '#calc');
       setShowExportModal(hash === '#export');
       
       if (hash === '') {
@@ -110,18 +108,28 @@ export default function App() {
     };
 
     // Initial check
-    handleHashChange();
+    handleStateChange();
 
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    window.addEventListener('popstate', handleStateChange);
+    window.addEventListener('hashchange', handleStateChange);
+    return () => {
+      window.removeEventListener('popstate', handleStateChange);
+      window.removeEventListener('hashchange', handleStateChange);
+    };
   }, []);
+
+  const pushHash = (hash: string) => {
+    window.history.pushState(null, '', hash);
+    window.dispatchEvent(new Event('popstate'));
+  };
 
   const safeBack = () => {
     const before = window.location.hash;
     window.history.back();
     setTimeout(() => {
       if (window.location.hash === before) {
-        window.location.hash = '';
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        window.dispatchEvent(new Event('popstate'));
       }
     }, 50);
   };
@@ -209,24 +217,16 @@ export default function App() {
     setEditValue('');
   };
 
-  const toggleCalcMode = () => {
-    if (window.location.hash !== '#calc') {
-      window.location.hash = 'calc';
-    } else {
-      safeBack();
-    }
-  };
-
   const toggleSummaryMode = () => {
     if (window.location.hash !== '#summary') {
-      window.location.hash = 'summary';
+      pushHash('#summary');
     } else {
       safeBack();
     }
   };
 
   const handleEntryClick = (id: string) => {
-    if (!isCalcMode && !isSummaryMode) return;
+    if (!isSummaryMode) return;
     setCalcSelection(prev => {
       if (prev.includes(id)) {
         return prev.filter(x => x !== id);
@@ -412,41 +412,16 @@ export default function App() {
     }
 
     const fileName = `时间切片记录_${exportStartDate}_至_${exportEndDate}.${exportFormat}`;
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const file = new File([blob], fileName, { type: 'text/plain' });
-
-    if (navigator.share) {
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        try {
-          await navigator.share({
-            files: [file],
-            title: '时间切片记录',
-          });
-          return;
-        } catch (err) {
-          console.log('Share file failed or cancelled', err);
-        }
-      } else {
-        try {
-          await navigator.share({
-            title: '时间切片记录',
-            text: content,
-          });
-          return;
-        } catch (err) {
-          console.log('Share text failed or cancelled', err);
-        }
-      }
+    
+    // The "Hidden Link" Trick with Data URI
+    const encodedUri = `data:text/plain;charset=utf-8,${encodeURIComponent(content)}`;
+    
+    try {
+      await navigator.clipboard.writeText(encodedUri);
+      alert(`已生成 ${exportFormat.toUpperCase()} 文件的下载链接并复制到剪贴板！\n\n请打开手机浏览器（如 Safari、Chrome 等），在地址栏粘贴并访问，即可下载或查看该文件。`);
+    } catch (err) {
+      alert('复制链接失败，请重试');
     }
-
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
   };
 
   return (
@@ -468,7 +443,7 @@ export default function App() {
             <button 
               onClick={() => {
                 if (window.location.hash !== '#export') {
-                  window.location.hash = 'export';
+                  pushHash('#export');
                 } else {
                   safeBack();
                 }
@@ -484,13 +459,6 @@ export default function App() {
               title="今日总结"
             >
               <BookOpen className="w-5 h-5" />
-            </button>
-            <button 
-              onClick={toggleCalcMode}
-              className={`p-2.5 rounded-full transition-colors ${isCalcMode ? 'bg-emerald-100 text-emerald-600' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
-              title="计算时长"
-            >
-              <Timer className="w-5 h-5" />
             </button>
           </div>
         </header>
@@ -831,37 +799,17 @@ export default function App() {
                         <div className="space-y-3 pl-3 border-l-2 border-stone-200 ml-0.5">
                           <AnimatePresence initial={false}>
                             {dayEntries.map((entry) => {
-                              const isSelected = calcSelection.includes(entry.id);
-                              const isBetween = calcSelection.length === 2 && entry.timestamp > minTime && entry.timestamp < maxTime;
-                              
-                              let cardClass = "group relative p-3.5 rounded-2xl shadow-sm transition-all duration-300 ";
-                              if (isCalcMode) {
-                                cardClass += "cursor-pointer hover:scale-[1.02] active:scale-[0.98] ";
-                              }
-                              
-                              if (isSelected) {
-                                cardClass += "bg-emerald-50 border-2 border-emerald-500 z-10 ";
-                              } else if (isBetween) {
-                                cardClass += "bg-emerald-50/40 border border-emerald-200 border-l-4 border-l-emerald-400 ";
-                              } else {
-                                cardClass += "bg-white border border-stone-100 ";
-                                if (isCalcMode && calcSelection.length === 2) {
-                                  cardClass += "opacity-40 grayscale-[0.5] ";
-                                }
-                              }
-
                               return (
                                 <motion.div
                                   key={entry.id}
                                   initial={{ opacity: 0, y: -10, scale: 0.95 }}
                                   animate={{ opacity: 1, y: 0, scale: 1 }}
                                   exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
-                                  onClick={() => handleEntryClick(entry.id)}
-                                  className={cardClass}
+                                  className="group relative p-3.5 rounded-2xl shadow-sm transition-all duration-300 bg-white border border-stone-100"
                                 >
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="flex-1">
-                                      <div className={`text-[11px] font-mono font-medium mb-1.5 ${isSelected || isBetween ? 'text-emerald-600' : 'text-stone-400'}`}>
+                                      <div className="text-[11px] font-mono font-medium mb-1.5 text-stone-400">
                                         {new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                                       </div>
                                       {editingId === entry.id ? (
@@ -895,12 +843,12 @@ export default function App() {
                                           </div>
                                         </div>
                                       ) : (
-                                        <p className={`text-[15px] leading-relaxed break-words ${isSelected || isBetween ? 'text-emerald-900' : 'text-stone-800'}`}>
+                                        <p className="text-[15px] leading-relaxed break-words text-stone-800">
                                           {entry.text}
                                         </p>
                                       )}
                                     </div>
-                                    {!isCalcMode && editingId !== entry.id && (
+                                    {editingId !== entry.id && (
                                       <div className="flex items-center gap-1">
                                         {deletingId === entry.id ? (
                                           <div className="flex items-center gap-1 bg-red-50 px-2 py-1.5 rounded-xl">
@@ -982,28 +930,6 @@ export default function App() {
                 >
                   完成总结，返回记录
                 </button>
-              </motion.div>
-            ) : isCalcMode ? (
-              <motion.div 
-                key="calc-panel"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 20 }}
-                transition={{ duration: 0.2 }}
-                className="flex flex-col items-center justify-center"
-              >
-                {calcSelection.length === 0 && <p className="text-stone-500 font-medium py-4">请点击选择第一个时间记录</p>}
-                {calcSelection.length === 1 && <p className="text-emerald-600 font-medium py-4">请点击选择第二个时间记录</p>}
-                {calcSelection.length === 2 && (
-                  <div className="text-center py-1">
-                    <p className="text-stone-500 text-xs mb-1">经过时长</p>
-                    <p className="text-2xl font-bold text-emerald-600">{durationText}</p>
-                  </div>
-                )}
-                <div className="flex gap-3 mt-3 w-full">
-                  <button onClick={() => setCalcSelection([])} className="flex-1 py-3 bg-stone-100 text-stone-700 rounded-2xl font-medium hover:bg-stone-200 transition-colors text-sm">重置选择</button>
-                  <button onClick={toggleCalcMode} className="flex-1 py-3 bg-stone-800 text-white rounded-2xl font-medium hover:bg-stone-700 transition-colors text-sm">退出计算</button>
-                </div>
               </motion.div>
             ) : (
               <motion.form 
@@ -1114,21 +1040,21 @@ export default function App() {
                     className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-xl font-medium transition-colors"
                   >
                     <FileText className="w-5 h-5" />
-                    保存为 TXT 文件
+                    生成 TXT 下载链接 (复制到剪贴板)
                   </button>
                   <button 
                     onClick={() => exportData('md')}
                     className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl font-medium transition-colors"
                   >
                     <FileCode className="w-5 h-5" />
-                    保存为 Markdown 文件
+                    生成 Markdown 下载链接 (复制到剪贴板)
                   </button>
                   <button 
                     onClick={() => exportData('copy')}
                     className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-stone-100 text-stone-700 hover:bg-stone-200 rounded-xl font-medium transition-colors"
                   >
                     <Copy className="w-5 h-5" />
-                    复制到剪贴板
+                    直接复制纯文本内容
                   </button>
                 </div>
               </motion.div>
